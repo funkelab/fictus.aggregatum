@@ -75,10 +75,9 @@ def sample_aggregates(
     if num_clusters == 0:
         return np.zeros(boundary_distance.shape, dtype=np.float32)
 
-    boundary_density = np.exp(
-        -((boundary_distance - boundary_distance_mean) ** 2)
-        / boundary_distance_var**2
-    )
+    numerator = (boundary_distance - boundary_distance_mean) ** 2
+    denominator = boundary_distance_var**2
+    boundary_density = np.exp(-numerator / denominator)
     interior_density = boundary_density * (boundary_distance > 0)
 
     # make sure densities sum up to 1
