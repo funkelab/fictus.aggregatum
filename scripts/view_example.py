@@ -1,4 +1,5 @@
 """Small script to view a simple set of example cells."""
+
 from fictus.aggregatum import make_cell
 import napari
 

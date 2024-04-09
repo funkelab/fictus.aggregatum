@@ -76,7 +76,8 @@ def sample_aggregates(
         return np.zeros(boundary_distance.shape, dtype=np.float32)
 
     boundary_density = np.exp(
-        -((boundary_distance - boundary_distance_mean) ** 2) / boundary_distance_var**2
+        -((boundary_distance - boundary_distance_mean) ** 2)
+        / boundary_distance_var**2
     )
     interior_density = boundary_density * (boundary_distance > 0)
 
@@ -145,7 +146,7 @@ def make_cell(seed, wavelength_membrane=500, wavelength_punctae=700):
     print("Creating membrane...")
     distances, membrane = sample_membrane(
         shape=(128, 128, 128),
-        elongation=(30, 30, 60), # --> number ratio of the axes
+        elongation=(30, 30, 60),  # --> number ratio of the axes
         membrane_width=3.0,
         membrane_fuzziness=1.0,
         membrane_jitter_amplitude=500.0,
@@ -159,7 +160,7 @@ def make_cell(seed, wavelength_membrane=500, wavelength_punctae=700):
         num_cluster_mean=200,  # 1?
         num_cluster_var=1.0,
         boundary_distance_mean=20.0,  # 1
-        boundary_distance_var=10.0,   # 2
+        boundary_distance_var=10.0,  # 2
         cluster_var=1.0,
         punctae_intensity=10.0,
         num_punctae=2000,
