@@ -5,6 +5,6 @@ import pytest
 
 @pytest.mark.parametrize("seed", [0, 1])
 def test_reproducibility(seed):
-    cell1 = make_cell(seed, 560, 570)
-    cell2 = make_cell(seed, 560, 570)
+    cell1, _ = make_cell(seed, 560, 570)
+    cell2, _ = make_cell(seed, 560, 570)
     assert np.all(cell1 == cell2)

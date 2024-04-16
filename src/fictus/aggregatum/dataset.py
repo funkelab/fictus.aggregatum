@@ -2,19 +2,22 @@ import napari
 import numpy as np
 from scipy.ndimage import distance_transform_edt, gaussian_filter
 from scipy.spatial.transform import Rotation
-from fictus.aggregatum.wav2rgb import wav2RGB
+from fictus.aggregatum.visualization import wav2RGB
 
 
 def sample_membrane(
     shape,
-    elongation,
+    radius,
+    elongation_ratio,
     membrane_width,
     membrane_fuzziness,
     membrane_jitter_amplitude,
     membrane_jitter_smoothness,
-    seed=0,
+    seed=None,
 ):
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
+    elongation = np.array([radius, radius, radius * elongation_ratio], dtype=np.float32)
     # coordinates: (d, h, w, 3)
     coordinates = np.stack(
         np.meshgrid(
@@ -54,6 +57,38 @@ def sample_membrane(
 
     return -distances, membrane
 
+def sample_nucleus(
+    distances,
+    nucleus_radius,
+    seed=None,
+):
+    if seed is not None:
+        np.random.seed(seed)
+    shape = distances.shape
+
+    # Sample a nucleus point in where distances are highest
+    center = np.unravel_index(np.argmax(distances), distances.shape)
+
+    coordinates = np.stack(
+        np.meshgrid(
+            np.arange(shape[0]), np.arange(shape[1]), np.arange(shape[2]), indexing="ij"
+        ),
+        axis=-1,
+    ).astype(np.float32)
+    # set center to (0, 0, 0)
+    coordinates -= center
+    # compute signed distance to sphere surface
+    nucleus_distances = np.sqrt(np.sum(coordinates**2, axis=-1)) - nucleus_radius
+    nucleus_distances = gaussian_filter(distances, 1.0)
+    return nucleus_distances < 0.0
+
+
+def get_segmentation(distances, membrane_width):
+    three_class = np.zeros(distances.shape, dtype=np.uint64)
+    three_class[distances > 0] = 1
+    three_class[np.abs(distances) < membrane_width] = 2
+    return three_class
+
 
 def sample_aggregates(
     boundary_distance,
@@ -64,9 +99,10 @@ def sample_aggregates(
     cluster_var,
     punctae_intensity,
     num_punctae,
-    seed=0,
+    seed=None,
 ):
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
     num_clusters = int(np.round(np.random.normal(num_cluster_mean, num_cluster_var)))
 
     shape = boundary_distance.shape
@@ -104,26 +140,17 @@ def sample_aggregates(
     return boundary_density, punctae
 
 
-def apply_spectra(membrane, punctae, wavelength_membrane=560, wavelength_punctae=570):
-    membrane_rgb = wav2RGB(wavelength_membrane)  # returns r,g,b values between 0 and 1
-    punctae_rgb = wav2RGB(wavelength_punctae)  # returns r,g,b values between 0 and 1
-
-    membrane_image = np.stack([membrane * c for c in membrane_rgb], axis=-1)
-    punctae_image = np.stack([punctae * c for c in punctae_rgb], axis=-1)
-
-    return membrane_image + punctae_image
-
-
 def apply_optics(
     membrane,
     punctae,
     hf_noise_sigma,
     lf_noise_sigma,
     lf_noise_smoothness,
-    seed=0,
     psf_sigmas=(5.0, 1.0, 1.0),
+    seed=None,
 ):
-    np.random.seed(seed)
+    if seed is not None:
+        np.random.seed(seed)
 
     membrane = gaussian_filter(membrane, psf_sigmas)
     punctae = gaussian_filter(punctae, psf_sigmas)
@@ -141,47 +168,63 @@ def apply_optics(
     return membrane, punctae
 
 
-def make_cell(seed, wavelength_membrane=500, wavelength_punctae=700):
-    print("Creating membrane...")
+def make_cell(
+    seed,
+    elongation_ratio=2.0,
+    num_cluster_mean=50,
+    # These should be kept constant
+    shape=(128, 128, 128),
+    radius=30.0,
+    membrane_width=3.0,
+    membrane_fuzziness=1.0,
+    membrane_jitter_amplitude=500.0,
+    membrane_jitter_smoothness=10.0,
+    num_cluster_var=1.0,
+    avg_punctae_per_cluster=10,
+    boundary_distance_mean=20.0,
+    boundary_distance_var=10.0,
+    cluster_var=1.0,
+    punctae_intensity=10.0,
+    hf_noise_sigma=0.1,
+    lf_noise_sigma=25.0,
+    lf_noise_smoothness=15.0,
+):
+    num_punctae = avg_punctae_per_cluster * num_cluster_mean
+
     distances, membrane = sample_membrane(
-        shape=(128, 128, 128),
-        elongation=(30, 30, 60),  # --> number ratio of the axes
-        membrane_width=3.0,
-        membrane_fuzziness=1.0,
-        membrane_jitter_amplitude=500.0,
-        membrane_jitter_smoothness=10.0,
+        shape=shape,
+        radius=radius,
+        elongation_ratio=elongation_ratio,
+        membrane_width=membrane_width,
+        membrane_fuzziness=membrane_fuzziness,
+        membrane_jitter_amplitude=membrane_jitter_amplitude,
+        membrane_jitter_smoothness=membrane_jitter_smoothness,
         seed=seed,
     )
 
-    print("Creating punctae...")
-    boundary_density, punctae = sample_aggregates(
+    nucleus = sample_nucleus(distances, nucleus_radius=radius)
+
+    _, punctae = sample_aggregates(
         distances,
-        num_cluster_mean=200,  # 1?
-        num_cluster_var=1.0,
-        boundary_distance_mean=20.0,  # 1
-        boundary_distance_var=10.0,  # 2
-        cluster_var=1.0,
-        punctae_intensity=10.0,
-        num_punctae=2000,
+        num_cluster_mean=num_cluster_mean,
+        num_cluster_var=num_cluster_var,
+        boundary_distance_mean=boundary_distance_mean,
+        boundary_distance_var=boundary_distance_var,
+        cluster_var=cluster_var,
+        punctae_intensity=punctae_intensity,
+        num_punctae=num_punctae,
         seed=seed,
     )
 
-    print("Applying optics...")
     membrane, punctae = apply_optics(
         membrane,
         punctae,
-        hf_noise_sigma=0.1,
-        lf_noise_sigma=25.0,
-        lf_noise_smoothness=15.0,
+        hf_noise_sigma=hf_noise_sigma,
+        lf_noise_sigma=lf_noise_sigma,
+        lf_noise_smoothness=lf_noise_smoothness,
         seed=seed,
     )
 
-    print("Applying spectra...")
-    cell = apply_spectra(
-        membrane,
-        punctae,
-        wavelength_membrane=wavelength_membrane,
-        wavelength_punctae=wavelength_punctae,
-    )
+    segmentation = get_segmentation(distances, membrane_width=membrane_width)
 
-    return cell
+    return membrane, punctae, nucleus, segmentation
