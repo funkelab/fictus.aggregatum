@@ -17,9 +17,10 @@ authors = [
 ]
 dynamic = ["version"]
 dependencies = [
-  'scipy', 
+  'scipy',
   'numpy',
-  'napari[all]'
+  'napari[all]',
+  'zarr'
 ]
 
 [project.optional-dependencies]
