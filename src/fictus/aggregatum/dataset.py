@@ -1,8 +1,6 @@
-import napari
 import numpy as np
 from scipy.ndimage import distance_transform_edt, gaussian_filter
 from scipy.spatial.transform import Rotation
-from fictus.aggregatum.visualization import wav2RGB
 
 
 def sample_membrane(
@@ -57,17 +55,27 @@ def sample_membrane(
 
     return -distances, membrane
 
+
 def sample_nucleus(
-    distances,
+    boundary_distances,
     nucleus_radius,
+    membrane_width=3.0,
+    nucleus_jitter_amplitude=500.0,
+    nucleus_jitter_smoothness=10.0,
+    nucleus_fuzziness=0.5,
+    chromatin_intensity=1.0,
+    chromatin_intensity_var=5.0,
+    chromatin_smoothness=1.0,
     seed=None,
 ):
     if seed is not None:
         np.random.seed(seed)
-    shape = distances.shape
+    shape = boundary_distances.shape
 
     # Sample a nucleus point in where distances are highest
-    center = np.unravel_index(np.argmax(distances), distances.shape)
+    max_distance = np.max(boundary_distances)
+    center = np.unravel_index(np.argmax(boundary_distances), boundary_distances.shape)
+    nucleus_radius = min(nucleus_radius, max_distance - 3 * membrane_width)
 
     coordinates = np.stack(
         np.meshgrid(
@@ -78,16 +86,35 @@ def sample_nucleus(
     # set center to (0, 0, 0)
     coordinates -= center
     # compute signed distance to sphere surface
-    nucleus_distances = np.sqrt(np.sum(coordinates**2, axis=-1)) - nucleus_radius
-    nucleus_distances = gaussian_filter(distances, 1.0)
-    return nucleus_distances < 0.0
+    distances = np.sqrt(np.sum(coordinates**2, axis=-1)) - nucleus_radius
+
+    distance_jitter = np.random.normal(
+        0, nucleus_jitter_amplitude, size=distances.shape
+    )
+    distances += gaussian_filter(distance_jitter, nucleus_jitter_smoothness)
+
+    # Transfer distance to nucleus segmentation
+    nucleus_segmentation = distances < 0
+
+    # Make chromatin
+    chromatin = np.random.normal(
+        chromatin_intensity, chromatin_intensity_var, size=shape
+    )
+    chromatin = gaussian_filter(chromatin, chromatin_smoothness)
+
+    # Create nucleus from a smooth the nucleus segmentation
+    nucleus = chromatin * gaussian_filter(
+        nucleus_segmentation.astype(np.float32), nucleus_fuzziness
+    )
+    return nucleus, nucleus_segmentation
 
 
-def get_segmentation(distances, membrane_width):
-    three_class = np.zeros(distances.shape, dtype=np.uint64)
-    three_class[distances > 0] = 1
-    three_class[np.abs(distances) < membrane_width] = 2
-    return three_class
+def get_segmentation(distances, nucleus_segmentation, membrane_width):
+    multi_class = np.zeros(distances.shape, dtype=np.uint64)
+    multi_class[distances > 0] = 1
+    multi_class[nucleus_segmentation] = 3
+    multi_class[np.abs(distances) < membrane_width] = 2
+    return multi_class
 
 
 def sample_aggregates(
@@ -143,6 +170,7 @@ def sample_aggregates(
 def apply_optics(
     membrane,
     punctae,
+    nucleus,
     hf_noise_sigma,
     lf_noise_sigma,
     lf_noise_smoothness,
@@ -154,10 +182,12 @@ def apply_optics(
 
     membrane = gaussian_filter(membrane, psf_sigmas)
     punctae = gaussian_filter(punctae, psf_sigmas)
+    nucleus = gaussian_filter(nucleus, psf_sigmas)
 
     # Apply high-frequency noise
     membrane += np.random.normal(0, hf_noise_sigma, size=membrane.shape)
     punctae += np.random.normal(0, hf_noise_sigma, size=punctae.shape)
+    nucleus += np.random.normal(0, hf_noise_sigma, size=nucleus.shape)
 
     # Apply low-frequency noise to the membrane
     membrane += gaussian_filter(
@@ -165,7 +195,8 @@ def apply_optics(
     )
     membrane = np.clip(membrane, a_min=0, a_max=None)
     punctae = np.clip(punctae, a_min=0, a_max=None)
-    return membrane, punctae
+    nucleus = np.clip(nucleus, a_min=0, a_max=None)
+    return membrane, punctae, nucleus
 
 
 def make_cell(
@@ -202,7 +233,9 @@ def make_cell(
         seed=seed,
     )
 
-    nucleus = sample_nucleus(distances, nucleus_radius=radius)
+    nucleus, nucleus_segmentation = sample_nucleus(
+        distances, nucleus_radius=np.round(2 * radius / 3)
+    )
 
     _, punctae = sample_aggregates(
         distances,
@@ -216,15 +249,17 @@ def make_cell(
         seed=seed,
     )
 
-    membrane, punctae = apply_optics(
+    membrane, punctae, nucleus = apply_optics(
         membrane,
         punctae,
+        nucleus,
         hf_noise_sigma=hf_noise_sigma,
         lf_noise_sigma=lf_noise_sigma,
         lf_noise_smoothness=lf_noise_smoothness,
         seed=seed,
     )
 
-    segmentation = get_segmentation(distances, membrane_width=membrane_width)
-
+    segmentation = get_segmentation(
+        distances, nucleus_segmentation, membrane_width=membrane_width
+    )
     return membrane, punctae, nucleus, segmentation

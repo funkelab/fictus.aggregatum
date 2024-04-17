@@ -1,3 +1,6 @@
+import numpy as np
+
+
 def wav2RGB(wavelength):
     """
     Code adapted from: [here](http://codingmess.blogspot.com/2009/05/conversion-of-wavelength-in-nanometers.html)
@@ -49,12 +52,9 @@ def wav2RGB(wavelength):
     return R, G, B  # [SSS*R, SSS*G, SSS*B]
 
 
-def apply_spectra(membrane, punctae, wavelength_membrane=560, wavelength_punctae=570):
-    membrane_rgb = wav2RGB(wavelength_membrane)  # returns r,g,b values between 0 and 1
-    punctae_rgb = wav2RGB(wavelength_punctae)  # returns r,g,b values between 0 and 1
+def apply_spectra(image, wavelength):
+    rgb = wav2RGB(wavelength)  # returns r,g,b values between 0 and 1
 
-    membrane_image = np.stack([membrane * c for c in membrane_rgb], axis=-1)
-    punctae_image = np.stack([punctae * c for c in punctae_rgb], axis=-1)
+    image = np.stack([image * c for c in rgb], axis=-1)
 
-    return membrane_image + punctae_image
-
+    return image
